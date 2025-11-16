@@ -1,12 +1,12 @@
-import { CreateGameData } from '../types/index.js';
 import { generateId } from '../utils/helpers.js';
-import { createNewGame } from './gameManager.js';
 
-export const createGame = (players: string[]): CreateGameData => {
-  const gameId = createNewGame(players);
+export const createGame = (players: string[]): { idGame: string; idPlayer: string }[] => {
+  const gameId = generateId();
   
-  return {
-    idGame: gameId,
-    idPlayer: players[0] 
-  };
+  console.log(`Creating game ${gameId} for players:`, players);
+ 
+  return players.map(playerId => ({
+    idGame: gameId, 
+    idPlayer: playerId
+  }));
 };

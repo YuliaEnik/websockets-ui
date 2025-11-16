@@ -1,10 +1,14 @@
 import type { WebSocketMessage, RegistrationResponse } from '../types/index.js';
 
-export const createWebSocketMessage = (type: string, data: unknown): WebSocketMessage => ({
-  type,
-  data,
-  id: 0
-});
+export const createWebSocketMessage = (type: string, data: unknown): WebSocketMessage => {
+  const dataString = typeof data === 'string' ? data : JSON.stringify(data);
+  
+  return {
+    type,
+    data: dataString, 
+    id: 0
+  };
+};
 
 export const createRegistrationResponse = (
   name: string, 

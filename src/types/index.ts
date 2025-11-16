@@ -94,3 +94,30 @@ export enum CellState {
   Shot = 'shot',
   Killed = 'killed'
 }
+export interface AttackData {
+  gameId: string;
+  x: number;
+  y: number;
+  indexPlayer: string;
+}
+export interface RandomAttackData {
+  gameId: string;
+  indexPlayer: string;
+}
+
+export interface AttackResult {
+  position: {
+    x: number;
+    y: number;
+  };
+  currentPlayer: string;
+  status: 'miss' | 'killed' | 'shot';
+}
+
+export interface TurnData {
+  currentPlayer: string;
+}
+
+export interface FinishData {
+  winPlayer: string;
+}

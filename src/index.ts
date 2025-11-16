@@ -1,13 +1,14 @@
 import { WebSocketServer, WebSocket } from 'ws';
-import  { httpServer }  from './http_server/index.js';
-import { createWebSocketMessage, createRegistrationResponse, generateId } from './utils/helpers.js';
+import { httpServer } from './http_server/index.js';
+import { createWebSocketMessage, createRegistrationResponse } from './utils/helpers.js';
 import { 
   registerPlayer, 
   findPlayerByWebSocket, 
   removePlayer, 
   getWinners,
   getPlayer,
-  getAllPlayers 
+  getAllPlayers,
+  updatePlayerWins 
 } from './services/playerService.js';
 import { 
   createRoom, 
@@ -18,10 +19,29 @@ import {
   getRoom 
 } from './services/roomService.js';
 import { createGame } from './services/gameService.js';
-import type { WebSocketMessage, PlayerData, AddUserToRoomData } from './types/index.js';
-import { addShipsToGame, isGameReadyToStart, getPlayerShips, getGame } from './services/gameManager.js';
+import { 
+  addShipsToGame, 
+  isGameReadyToStart, 
+  getPlayerShips, 
+  getGame,
+  processAttack,
+  generateRandomAttack,
+  checkGameFinished,
+  getCurrentPlayer
+} from './services/gameManager.js';
 import { validateShips } from './utils/validation.js';
-import type { AddShipsData, Ship } from './types/index.js';
+import type { 
+  WebSocketMessage, 
+  PlayerData, 
+  AddUserToRoomData, 
+  AddShipsData, 
+  AttackData, 
+  RandomAttackData,
+  AttackResult,
+  TurnData,
+  FinishData,
+  Ship 
+} from './types/index.js';
 
 const HTTP_PORT = 8181;
 const WS_PORT = 3000;
@@ -91,17 +111,23 @@ function handleAddUserToRoom(ws: WebSocket, data: AddUserToRoomData): void {
     console.log(`Player ${player.name} joined room ${data.indexRoom}`);
 
     const playersIds = room.roomUsers.map(user => user.index);
+    const gameDataArray = createGame(playersIds);
+
+    console.log('Game data array:', gameDataArray);
 
     room.roomUsers.forEach((user) => {
       const playerData = getPlayer(user.index);
       if (playerData && playerData.ws.readyState === playerData.ws.OPEN) {
-        const gameData = createGame(playersIds);
-        const response = createWebSocketMessage('create_game', {
-          idGame: gameData.idGame,
-          idPlayer: user.index
-        });
-        sendMessage(playerData.ws, response);
-        console.log('Sent create_game to player:', user.name);
+        
+        const playerGameData = gameDataArray.find(g => g.idPlayer === user.index);
+        if (playerGameData) {
+          const response = createWebSocketMessage('create_game', {
+            idGame: playerGameData.idGame, 
+            idPlayer: user.index
+          });
+          sendMessage(playerData.ws, response);
+          console.log(`Sent create_game to ${user.name}:`, playerGameData);
+        }
       }
     });
 
@@ -123,9 +149,54 @@ function handleAddShips(ws: WebSocket, data: AddShipsData): void {
   
   if (shipsAdded) {
     console.log(`Ships added for player ${player.name} in game ${data.gameId}`);
-
+    
     if (isGameReadyToStart(data.gameId)) {
       startGame(data.gameId);
+    }
+  }
+}
+
+function handleAttack(ws: WebSocket, data: AttackData): void {
+  const player = findPlayerByWebSocket(ws);
+  if (!player || player.index !== data.indexPlayer) return;
+
+  const attackResult = processAttack(data.gameId, data.indexPlayer, data.x, data.y);
+  
+  if (attackResult) {
+    console.log(`Player ${player.name} attacked (${data.x},${data.y}) - ${attackResult.status}`);
+    
+    broadcastAttackResult(data.gameId, attackResult);
+    
+    const winnerId = checkGameFinished(data.gameId);
+    if (winnerId) {
+      finishGame(data.gameId, winnerId);
+    } else {
+
+      sendTurnUpdate(data.gameId);
+    }
+  }
+}
+
+function handleRandomAttack(ws: WebSocket, data: RandomAttackData): void {
+  const player = findPlayerByWebSocket(ws);
+  if (!player || player.index !== data.indexPlayer) return;
+
+  const randomCoords = generateRandomAttack(data.gameId, data.indexPlayer);
+  
+  if (randomCoords) {
+    console.log(`Player ${player.name} random attack generated: (${randomCoords.x},${randomCoords.y})`);
+    
+    const attackResult = processAttack(data.gameId, data.indexPlayer, randomCoords.x, randomCoords.y);
+    
+    if (attackResult) {
+      broadcastAttackResult(data.gameId, attackResult);
+      
+      const winnerId = checkGameFinished(data.gameId);
+      if (winnerId) {
+        finishGame(data.gameId, winnerId);
+      } else {
+        sendTurnUpdate(data.gameId);
+      }
     }
   }
 }
@@ -135,7 +206,7 @@ function startGame(gameId: string): void {
   if (!game) return;
 
   console.log(`Starting game ${gameId}`);
- 
+  
   game.players.forEach(playerId => {
     const player = getPlayer(playerId);
     if (player && player.ws.readyState === player.ws.OPEN) {
@@ -151,14 +222,60 @@ function startGame(gameId: string): void {
     }
   });
 
-  const firstPlayer = getPlayer(game.currentPlayer);
-  if (firstPlayer && firstPlayer.ws.readyState === firstPlayer.ws.OPEN) {
-    const turnMessage = createWebSocketMessage('turn', {
-      currentPlayer: game.currentPlayer
-    });
-    sendMessage(firstPlayer.ws, turnMessage);
-    console.log('Sent turn to player:', firstPlayer.name);
+  sendTurnUpdate(gameId);
+}
+
+function broadcastAttackResult(gameId: string, attackResult: AttackResult): void {
+  const game = getGame(gameId);
+  if (!game) return;
+
+  const message = createWebSocketMessage('attack', attackResult);
+  
+  game.players.forEach(playerId => {
+    const player = getPlayer(playerId);
+    if (player && player.ws.readyState === player.ws.OPEN) {
+      sendMessage(player.ws, message);
+    }
+  });
+}
+
+function sendTurnUpdate(gameId: string): void {
+  const currentPlayer = getCurrentPlayer(gameId);
+  if (!currentPlayer) return;
+
+  const turnMessage = createWebSocketMessage('turn', {
+    currentPlayer
+  } as TurnData);
+
+  const player = getPlayer(currentPlayer);
+  if (player && player.ws.readyState === player.ws.OPEN) {
+    sendMessage(player.ws, turnMessage);
+    console.log('Sent turn to player:', player.name);
   }
+}
+
+function finishGame(gameId: string, winnerId: string): void {
+  const game = getGame(gameId);
+  if (!game) return;
+
+  console.log(`Game ${gameId} finished! Winner: ${winnerId}`);
+
+  updatePlayerWins(winnerId);
+  
+  const finishMessage = createWebSocketMessage('finish', {
+    winPlayer: winnerId
+  } as FinishData);
+  
+  game.players.forEach(playerId => {
+    const player = getPlayer(playerId);
+    if (player && player.ws.readyState === player.ws.OPEN) {
+      sendMessage(player.ws, finishMessage);
+    }
+  });
+
+  setTimeout(() => {
+    broadcastWinnersUpdate();
+  }, 100);
 }
 
 function handleRegistration(ws: WebSocket, data: PlayerData): void {
@@ -190,8 +307,11 @@ function handleRegistration(ws: WebSocket, data: PlayerData): void {
 
 function sendMessage(ws: WebSocket, message: WebSocketMessage): void {
   if (ws.readyState === ws.OPEN) {
-    ws.send(JSON.stringify(message));
+     const messageString = JSON.stringify(message);
+    ws.send(messageString);
     console.log('Sent message:', message);
+  }else {
+    console.log('WebSocket not open, state:', ws.readyState);
   }
 }
 
@@ -207,8 +327,28 @@ function handleDisconnection(ws: WebSocket): void {
 
 function handleMessage(ws: WebSocket, data: Buffer): void {
   try {
-    const message: WebSocketMessage = JSON.parse(data.toString());
-    console.log('Received message:', message);
+    const rawMessage = JSON.parse(data.toString());
+    console.log('Received raw message:', rawMessage);
+    
+    let messageData;
+    if (typeof rawMessage.data === 'string') {
+      try {
+        messageData = JSON.parse(rawMessage.data);
+      } catch (e) {
+        console.log('Failed to parse data as JSON, using as string');
+        messageData = rawMessage.data;
+      }
+    } else {
+      messageData = rawMessage.data;
+    }
+    
+    const message = {
+      type: rawMessage.type,
+      data: messageData,
+      id: rawMessage.id
+    };
+    
+    console.log('Processed message:', message);
     
     switch (message.type) {
       case 'reg':
@@ -217,11 +357,17 @@ function handleMessage(ws: WebSocket, data: Buffer): void {
       case 'create_room':
         handleCreateRoom(ws);
         break;
-      case 'add_user_to_oom':
+      case 'add_user_to_room':
         handleAddUserToRoom(ws, message.data as AddUserToRoomData);
         break;
-        case 'add_ships':
+      case 'add_ships':
         handleAddShips(ws, message.data as AddShipsData);
+        break;
+      case 'attack':
+        handleAttack(ws, message.data as AttackData);
+        break;
+      case 'randomAttack':
+        handleRandomAttack(ws, message.data as RandomAttackData);
         break;
       default:
         console.log('Unknown message type:', message.type);
