@@ -49,3 +49,48 @@ export interface CreateGameData {
   idGame: string;
   idPlayer: string;
 }
+
+export interface ShipPosition {
+  x: number;
+  y: number;
+}
+
+export interface Ship {
+  position: ShipPosition;
+  direction: boolean;
+  length: number;
+  type: 'small' | 'medium' | 'large' | 'huge';
+}
+
+export interface GameShip extends Ship {
+  hits: number;
+  sunk: boolean;
+}
+
+export interface AddShipsData {
+  gameId: string;
+  ships: Ship[];
+  indexPlayer: string;
+}
+
+export interface StartGameData {
+  ships: Ship[];
+  currentPlayerIndex: string;
+}
+
+export interface Game {
+  gameId: string;
+  players: string[];
+  ships: Map<string, GameShip[]>;
+  boards: Map<string, CellState[][]>;
+  currentPlayer: string;
+  status: 'waiting' | 'placing' | 'playing' | 'finished';
+}
+
+export enum CellState {
+  Empty = 'empty',
+  Ship = 'ship',
+  Miss = 'miss',
+  Shot = 'shot',
+  Killed = 'killed'
+}

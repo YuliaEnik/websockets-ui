@@ -19,6 +19,9 @@ import {
 } from './services/roomService.js';
 import { createGame } from './services/gameService.js';
 import type { WebSocketMessage, PlayerData, AddUserToRoomData } from './types/index.js';
+import { addShipsToGame, isGameReadyToStart, getPlayerShips, getGame } from './services/gameManager.js';
+import { validateShips } from './utils/validation.js';
+import type { AddShipsData, Ship } from './types/index.js';
 
 const HTTP_PORT = 8181;
 const WS_PORT = 3000;
@@ -107,6 +110,57 @@ function handleAddUserToRoom(ws: WebSocket, data: AddUserToRoomData): void {
   }
 }
 
+function handleAddShips(ws: WebSocket, data: AddShipsData): void {
+  const player = findPlayerByWebSocket(ws);
+  if (!player || player.index !== data.indexPlayer) return;
+
+  if (!validateShips(data.ships)) {
+    console.log('Invalid ships placement for player:', player.name);
+    return;
+  }
+
+  const shipsAdded = addShipsToGame(data.gameId, data.indexPlayer, data.ships);
+  
+  if (shipsAdded) {
+    console.log(`Ships added for player ${player.name} in game ${data.gameId}`);
+
+    if (isGameReadyToStart(data.gameId)) {
+      startGame(data.gameId);
+    }
+  }
+}
+
+function startGame(gameId: string): void {
+  const game = getGame(gameId);
+  if (!game) return;
+
+  console.log(`Starting game ${gameId}`);
+ 
+  game.players.forEach(playerId => {
+    const player = getPlayer(playerId);
+    if (player && player.ws.readyState === player.ws.OPEN) {
+      const playerShips = getPlayerShips(gameId, playerId);
+      if (playerShips) {
+        const response = createWebSocketMessage('start_game', {
+          ships: playerShips,
+          currentPlayerIndex: game.currentPlayer
+        });
+        sendMessage(player.ws, response);
+        console.log('Sent start_game to player:', player.name);
+      }
+    }
+  });
+
+  const firstPlayer = getPlayer(game.currentPlayer);
+  if (firstPlayer && firstPlayer.ws.readyState === firstPlayer.ws.OPEN) {
+    const turnMessage = createWebSocketMessage('turn', {
+      currentPlayer: game.currentPlayer
+    });
+    sendMessage(firstPlayer.ws, turnMessage);
+    console.log('Sent turn to player:', firstPlayer.name);
+  }
+}
+
 function handleRegistration(ws: WebSocket, data: PlayerData): void {
   const { name, password } = data;
   const result = registerPlayer({ name, password }, ws);
@@ -165,6 +219,9 @@ function handleMessage(ws: WebSocket, data: Buffer): void {
         break;
       case 'add_user_to_oom':
         handleAddUserToRoom(ws, message.data as AddUserToRoomData);
+        break;
+        case 'add_ships':
+        handleAddShips(ws, message.data as AddShipsData);
         break;
       default:
         console.log('Unknown message type:', message.type);
